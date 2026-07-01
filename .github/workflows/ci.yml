@@ -113,9 +113,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/xboardnext999/xboardnode-plus:latest
-            ghcr.io/xboardnext999/xboardnode-plus:${{ github.sha }}
-            ghcr.io/xboardnext999/xboardnode-plus:${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || env.RELEASE_VERSION }}
+            ghcr.io/acc66/xboardnode-plus:latest
+            ghcr.io/acc66/xboardnode-plus:${{ github.sha }}
+            ghcr.io/acc66/xboardnode-plus:${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || env.RELEASE_VERSION }}
 
   release:
     name: Release
