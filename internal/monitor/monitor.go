@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -126,11 +127,13 @@ var (
 )
 
 // readGCMetrics returns GC count and last pause duration.
-// It calls the STW runtime.ReadMemStats only when NumGC has changed since the
-// last call, making repeated Collect() calls cheap in steady state.
+// Uses debug.ReadGCStats (cheaper than runtime.ReadMemStats, no STW) to check
+// if NumGC changed, and only calls the full STW ReadMemStats when it has.
 func readGCMetrics() (numGC uint32, lastPauseMS float64) {
-	// runtime.ReadMemStats triggers STW; check cheaply first.
-	currentNumGC := uint32(runtime.NumGC())
+	var stats debug.GCStats
+	debug.ReadGCStats(&stats) // no STW, reads from already-maintained GC stats
+
+	currentNumGC := uint32(stats.NumGC)
 
 	gcMu.Lock()
 	defer gcMu.Unlock()
@@ -139,13 +142,11 @@ func readGCMetrics() (numGC uint32, lastPauseMS float64) {
 		return gcLastNumGC, gcLastPauseMS
 	}
 
-	var ms runtime.MemStats
-	runtime.ReadMemStats(&ms)
-	if ms.NumGC > 0 {
-		idx := (ms.NumGC - 1) % uint32(len(ms.PauseNs))
-		gcLastPauseMS = float64(ms.PauseNs[idx]) / 1e6
+	// NumGC changed — read the pause duration from GCStats (already in stats)
+	if len(stats.Pause) > 0 {
+		gcLastPauseMS = float64(stats.Pause[0]) / float64(time.Millisecond)
 	}
-	gcLastNumGC = ms.NumGC
+	gcLastNumGC = currentNumGC
 	return gcLastNumGC, gcLastPauseMS
 }
 
