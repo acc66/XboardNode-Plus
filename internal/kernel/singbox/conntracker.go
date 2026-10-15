@@ -18,13 +18,6 @@ import (
 	"github.com/cedar2025/xboard-node/internal/nlog"
 )
 
-// ipPool caches ipSnapshot maps to reduce allocations.
-var ipPool = sync.Pool{
-	New: func() interface{} {
-		return make(map[string]struct{}, 16)
-	},
-}
-
 // timerPool reuses time.Timer objects to avoid heap allocation on every
 // rate-limited packet (hot path for Hysteria2/QUIC which sends hundreds of
 // packets per second during video streaming).
@@ -92,42 +85,21 @@ func (u *userStats) removeConn(sourceIP string) {
 	u.mu.Unlock()
 }
 
-// distinctIPs returns the number of distinct IPs currently connected.
-func (u *userStats) distinctIPs() int {
-	u.mu.Lock()
-	n := len(u.ips)
-	u.mu.Unlock()
-	return n
-}
-
-// ipSnapshot returns a pooled copy of the current IP set.
-func (u *userStats) ipSnapshot() map[string]struct{} {
-	cp := ipPool.Get().(map[string]struct{})
-	for k := range cp {
-		delete(cp, k)
-	}
-	u.mu.Lock()
+// ipSet returns a copy of the current IP set (slow path only).
+func (u *userStats) ipSet() map[string]bool {
+	u.mu.RLock()
+	m := make(map[string]bool, len(u.ips))
 	for ip := range u.ips {
-		cp[ip] = struct{}{}
+		m[ip] = true
 	}
-	u.mu.Unlock()
-	return cp
-}
-
-// releaseIPSnapshot returns the snapshot to pool.
-// Large maps are discarded to prevent memory bloat.
-func releaseIPSnapshot(m map[string]struct{}) {
-	// Discard large maps to prevent pool memory bloat
-	if len(m) > 64 {
-		return
-	}
-	ipPool.Put(m)
+	u.mu.RUnlock()
+	return m
 }
 
 // aliveIPList returns the set of alive IPs as a boolean map (for reporting).
 func (u *userStats) aliveIPList() map[string]bool {
-	u.mu.Lock()
-	defer u.mu.Unlock()
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	if len(u.ips) == 0 {
 		return nil
 	}
@@ -157,8 +129,12 @@ func (u *userStats) aliveIPList() map[string]bool {
 //   - Per-connection rate limit token accumulation (amortized WaitN)
 type ConnTracker struct {
 	usersMu sync.RWMutex
-	users   map[int]*userStats  // userID → stats
-	uuidMap map[string]int      // UUID → userID (for lookup in RoutedConnection)
+	users   map[int]*userStats // userID → stats
+	uuidMap map[string]int     // UUID → userID (for lookup in RoutedConnection)
+
+	// connMap has its own lock so TCP open/close never takes usersMu for
+	// writing (which would stall every concurrent RoutedConnection lookup).
+	connMu  sync.Mutex
 	connMap map[string]net.Conn // connID → conn (only for force-close support)
 
 	idCounter atomic.Int64
@@ -271,9 +247,9 @@ func (t *ConnTracker) RoutedConnection(
 	connID := t.nextID()
 
 	// Store conn reference for force-close support
-	t.usersMu.Lock()
+	t.connMu.Lock()
 	t.connMap[connID] = conn
-	t.usersMu.Unlock()
+	t.connMu.Unlock()
 
 	var lim *rate.Limiter
 	if slf := t.speedLimitFunc.Load(); slf != nil {
@@ -351,16 +327,13 @@ func (t *ConnTracker) checkDeviceGate(us *userStats, userID int, sourceIP string
 		return false
 	}
 
+	// Fast path without allocation: already known locally, or under limit
+	// with no global state to consult.
 	us.mu.RLock()
-	localIPs := make(map[string]bool, len(us.ips))
-	for ip := range us.ips {
-		localIPs[ip] = true
-	}
+	_, known := us.ips[sourceIP]
 	localCount := len(us.ips)
 	us.mu.RUnlock()
-
-	// Already known locally
-	if localIPs[sourceIP] {
+	if known {
 		return false
 	}
 
@@ -375,6 +348,7 @@ func (t *ConnTracker) checkDeviceGate(us *userStats, userID int, sourceIP string
 		if localCount < limit {
 			return false
 		}
+		localIPs := us.ipSet()
 		ipList := make([]string, 0, localCount+1)
 		for ip := range localIPs {
 			ipList = append(ipList, ip)
@@ -397,7 +371,8 @@ func (t *ConnTracker) checkDeviceGate(us *userStats, userID int, sourceIP string
 	}
 
 	// Merge local + global
-	allIPs := make(map[string]bool)
+	localIPs := us.ipSet()
+	allIPs := make(map[string]bool, len(localIPs)+len(globalIPs))
 	for ip := range localIPs {
 		allIPs[ip] = true
 	}
@@ -474,9 +449,9 @@ func (t *ConnTracker) GetUserTraffic() (traffic map[int][2]int64, aliveIPs map[i
 
 // CloseByID force-closes a connection by its ID.
 func (t *ConnTracker) CloseByID(id string) bool {
-	t.usersMu.RLock()
+	t.connMu.Lock()
 	conn, ok := t.connMap[id]
-	t.usersMu.RUnlock()
+	t.connMu.Unlock()
 	if !ok {
 		return false
 	}
@@ -507,9 +482,9 @@ func (t *ConnTracker) ActiveCount() int {
 
 // removeConnRef removes the connection reference from connMap on close.
 func (t *ConnTracker) removeConnRef(connID string) {
-	t.usersMu.Lock()
+	t.connMu.Lock()
 	delete(t.connMap, connID)
-	t.usersMu.Unlock()
+	t.connMu.Unlock()
 }
 
 // ─── trackedConn (TCP) ──────────────────────────────────────────────────────

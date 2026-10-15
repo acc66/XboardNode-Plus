@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"math"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -18,10 +19,9 @@ import (
 var startTime = time.Now()
 
 func init() {
-	// Warm up the CPU sampler. The first cpu.Percent call with interval=0
-	// always returns 0% because it has no prior sample. This throwaway call
-	// seeds the baseline so subsequent Collect() calls return real values.
-	cpu.Percent(500*time.Millisecond, false)
+	// Seed the CPU baseline so the first Collect() returns real values.
+	// (Previously a blocking 500ms cpu.Percent sample at startup.)
+	collectCPU()
 
 	// Seed the network baseline so the first Collect() can compute rates.
 	collectNetSpeed()
@@ -121,8 +121,8 @@ func collectNetSpeed() (inSpeed, outSpeed float64) {
 // gcCache caches the last GC metrics to avoid calling ReadMemStats (STW) on
 // every Collect() invocation. We only refresh when NumGC actually increases.
 var (
-	gcMu         sync.Mutex
-	gcLastNumGC  uint32
+	gcMu          sync.Mutex
+	gcLastNumGC   uint32
 	gcLastPauseMS float64
 )
 
@@ -150,22 +150,66 @@ func readGCMetrics() (numGC uint32, lastPauseMS float64) {
 	return gcLastNumGC, gcLastPauseMS
 }
 
+// cpuMu guards the per-core baseline used by collectCPU.
+var (
+	cpuMu   sync.Mutex
+	cpuPrev []cpu.TimesStat
+)
+
+// collectCPU reads /proc/stat once (per-core) and derives both the overall
+// and per-core usage since the previous call, instead of two cpu.Percent
+// calls that each parse /proc/stat.
+func collectCPU() (total float64, perCore []float64) {
+	times, err := cpu.Times(true)
+	if err != nil || len(times) == 0 {
+		if err != nil {
+			nlog.Core().Debug("failed to get CPU usage", "error", err)
+		}
+		return 0, nil
+	}
+
+	cpuMu.Lock()
+	prev := cpuPrev
+	cpuPrev = times
+	cpuMu.Unlock()
+
+	if len(prev) != len(times) {
+		return 0, nil
+	}
+
+	perCore = make([]float64, len(times))
+	var busySum, allSum float64
+	for i := range times {
+		b1, a1 := cpuBusyAll(prev[i])
+		b2, a2 := cpuBusyAll(times[i])
+		db, da := b2-b1, a2-a1
+		if da > 0 && db >= 0 {
+			perCore[i] = math.Min(100, db/da*100)
+			busySum += db
+			allSum += da
+		}
+	}
+	if allSum > 0 {
+		total = math.Min(100, busySum/allSum*100)
+	}
+	return total, perCore
+}
+
+// cpuBusyAll mirrors gopsutil's busy/total accounting (guest time is already
+// included in user/nice on Linux).
+func cpuBusyAll(t cpu.TimesStat) (busy, all float64) {
+	all = t.User + t.System + t.Idle + t.Nice + t.Iowait + t.Irq + t.Softirq + t.Steal
+	busy = all - t.Idle - t.Iowait
+	return busy, all
+}
+
 // Collect gathers current system metrics
 func Collect() Status {
 	var s Status
 
 	s.Uptime = uint64(time.Since(startTime).Seconds())
 
-	if cpuPercent, err := cpu.Percent(0, false); err == nil && len(cpuPercent) > 0 {
-		s.CPU = cpuPercent[0]
-	} else if err != nil {
-		nlog.Core().Debug("failed to get CPU usage", "error", err)
-	}
-
-	// Per-core CPU usage (best-effort; safe if it fails).
-	if perCore, err := cpu.Percent(0, true); err == nil && len(perCore) > 0 {
-		s.CPUPerCore = perCore
-	}
+	s.CPU, s.CPUPerCore = collectCPU()
 
 	if loadAvg, err := load.Avg(); err == nil {
 		s.Load1 = loadAvg.Load1

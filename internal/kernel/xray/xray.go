@@ -762,15 +762,15 @@ func (x *Xray) aggregateStats() (map[int][2]int64, error) {
 		return nil, nil
 	}
 
-	traffic := make(map[int][2]int64)
+	traffic := make(map[int][2]int64, len(x.cumTraffic))
 	for _, u := range x.users {
 		email := userEmail(u.ID)
 
 		var dUp, dDown int64
-		if c := mgr.GetCounter(fmt.Sprintf("user>>>%s>>>traffic>>>uplink", email)); c != nil {
+		if c := mgr.GetCounter("user>>>" + email + ">>>traffic>>>uplink"); c != nil {
 			dUp = c.Set(0)
 		}
-		if c := mgr.GetCounter(fmt.Sprintf("user>>>%s>>>traffic>>>downlink", email)); c != nil {
+		if c := mgr.GetCounter("user>>>" + email + ">>>traffic>>>downlink"); c != nil {
 			dDown = c.Set(0)
 		}
 

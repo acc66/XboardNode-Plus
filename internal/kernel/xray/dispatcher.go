@@ -91,8 +91,8 @@ type ipCounter struct {
 // aliveIPs returns a snapshot of distinct IPs.
 func (ic *ipCounter) aliveIPs() map[string]bool {
 	result := make(map[string]bool)
-	ic.ips.Range(func(key, _ interface{}) bool {
-		if rv, ok := ic.ips.Load(key); ok && rv.(*atomic.Int64).Load() > 0 {
+	ic.ips.Range(func(key, rv interface{}) bool {
+		if rv.(*atomic.Int64).Load() > 0 {
 			result[key.(string)] = true
 		}
 		return true
