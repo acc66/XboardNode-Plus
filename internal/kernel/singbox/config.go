@@ -660,15 +660,22 @@ func buildHysteria(base M, nc *model.NodeSpec, users []model.UserSpec, tc kernel
 		}
 
 		// Masquerade: unauthenticated/probing HTTP/3 requests get a fake site.
-		// "nginx" returns a stock nginx 404 page; otherwise the value is passed
-		// through as a URL (http(s):// reverse proxy or file:// static dir).
-		switch nc.Masquerade {
-		case "":
-		case "nginx":
+		// "nginx" returns a stock nginx 404 page; http(s):// reverse proxies with
+		// the Host rewritten to the target (CDNs reject a foreign Host); other
+		// values (e.g. file:// static dir) are passed through to sing-box.
+		switch {
+		case nc.Masquerade == "":
+		case nc.Masquerade == "nginx":
 			base["masquerade"] = M{
 				"type":        "string",
 				"status_code": 404,
 				"content":     nginx404Page,
+			}
+		case strings.HasPrefix(nc.Masquerade, "http://") || strings.HasPrefix(nc.Masquerade, "https://"):
+			base["masquerade"] = M{
+				"type":         "proxy",
+				"url":          nc.Masquerade,
+				"rewrite_host": true,
 			}
 		default:
 			base["masquerade"] = nc.Masquerade

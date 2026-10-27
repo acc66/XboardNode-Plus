@@ -361,7 +361,24 @@ func TestBuildInbound_Hysteria2_WithMasquerade(t *testing.T) {
 		Masquerade: "https://www.bing.com",
 	}
 	inbound := buildInbound(testNodeSpec(nc), testUsers, kernel.TLSCert{CertPEM: []byte("CERT"), KeyPEM: []byte("KEY")})
-	assertMapValue(t, inbound, "masquerade", "https://www.bing.com")
+	// http(s) URL builds a reverse proxy that rewrites Host to the target.
+	proxy := inbound["masquerade"].(M)
+	assertMapValue(t, proxy, "type", "proxy")
+	assertMapValue(t, proxy, "url", "https://www.bing.com")
+	assertMapValue(t, proxy, "rewrite_host", true)
+	raw, _ := json.Marshal(proxy)
+	var popt option.Hysteria2Masquerade
+	if err := json.Unmarshal(raw, &popt); err != nil {
+		t.Fatalf("sing-box rejected proxy masquerade: %v", err)
+	}
+	if popt.ProxyOptions.URL != "https://www.bing.com" || !popt.ProxyOptions.RewriteHost {
+		t.Fatalf("unexpected parsed proxy masquerade: %+v", popt.ProxyOptions)
+	}
+
+	// file:// is passed through as a URL string.
+	nc.Masquerade = "file:///var/www"
+	inbound = buildInbound(testNodeSpec(nc), testUsers, kernel.TLSCert{CertPEM: []byte("CERT"), KeyPEM: []byte("KEY")})
+	assertMapValue(t, inbound, "masquerade", "file:///var/www")
 
 	// "nginx" builds a static nginx 404 page that sing-box accepts.
 	nc.Masquerade = "nginx"
@@ -369,7 +386,7 @@ func TestBuildInbound_Hysteria2_WithMasquerade(t *testing.T) {
 	masq := inbound["masquerade"].(M)
 	assertMapValue(t, masq, "type", "string")
 	assertMapValue(t, masq, "status_code", 404)
-	raw, _ := json.Marshal(masq)
+	raw, _ = json.Marshal(masq)
 	var opt option.Hysteria2Masquerade
 	if err := json.Unmarshal(raw, &opt); err != nil {
 		t.Fatalf("sing-box rejected masquerade: %v", err)
