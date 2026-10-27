@@ -9,6 +9,7 @@ import (
 	"github.com/cedar2025/xboard-node/internal/kernel"
 	"github.com/cedar2025/xboard-node/internal/model"
 	"github.com/cedar2025/xboard-node/internal/panel"
+	"github.com/sagernet/sing-box/option"
 )
 
 var testUsersPanel = []panel.User{
@@ -350,6 +351,39 @@ func TestBuildInbound_Hysteria2_WithObfs(t *testing.T) {
 	obfs := inbound["obfs"].(M)
 	assertMapValue(t, obfs, "type", "salamander")
 	assertMapValue(t, obfs, "password", "secret")
+}
+
+func TestBuildInbound_Hysteria2_WithMasquerade(t *testing.T) {
+	nc := &panel.NodeConfig{
+		Protocol:   "hysteria",
+		ServerPort: 444,
+		Version:    2,
+		Masquerade: "https://www.bing.com",
+	}
+	inbound := buildInbound(testNodeSpec(nc), testUsers, kernel.TLSCert{CertPEM: []byte("CERT"), KeyPEM: []byte("KEY")})
+	assertMapValue(t, inbound, "masquerade", "https://www.bing.com")
+
+	// "nginx" builds a static nginx 404 page that sing-box accepts.
+	nc.Masquerade = "nginx"
+	inbound = buildInbound(testNodeSpec(nc), testUsers, kernel.TLSCert{CertPEM: []byte("CERT"), KeyPEM: []byte("KEY")})
+	masq := inbound["masquerade"].(M)
+	assertMapValue(t, masq, "type", "string")
+	assertMapValue(t, masq, "status_code", 404)
+	raw, _ := json.Marshal(masq)
+	var opt option.Hysteria2Masquerade
+	if err := json.Unmarshal(raw, &opt); err != nil {
+		t.Fatalf("sing-box rejected masquerade: %v", err)
+	}
+	if opt.StringOptions.StatusCode != 404 || opt.StringOptions.Content != nginx404Page {
+		t.Fatalf("unexpected parsed masquerade: %+v", opt.StringOptions)
+	}
+
+	// Without masquerade the key must be absent.
+	nc.Masquerade = ""
+	inbound = buildInbound(testNodeSpec(nc), testUsers, kernel.TLSCert{CertPEM: []byte("CERT"), KeyPEM: []byte("KEY")})
+	if _, ok := inbound["masquerade"]; ok {
+		t.Fatal("masquerade should be omitted when empty")
+	}
 }
 
 func TestBuildInbound_Hysteria1(t *testing.T) {

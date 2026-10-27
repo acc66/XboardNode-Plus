@@ -127,6 +127,7 @@ type NodeConfig struct {
 	DownMbps     int    `json:"down_mbps,omitempty"`
 	Obfs         string `json:"obfs,omitempty"`
 	ObfsPassword string `json:"obfs-password,omitempty"`
+	Masquerade   string `json:"masquerade,omitempty"` // Hysteria2: e.g. https://www.bing.com
 
 	// TUIC
 	CongestionControl string `json:"congestion_control,omitempty"`

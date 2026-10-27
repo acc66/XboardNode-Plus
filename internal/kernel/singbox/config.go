@@ -636,6 +636,9 @@ func buildTrojan(base M, nc *model.NodeSpec, users []model.UserSpec, tc kernel.T
 	return base
 }
 
+// nginx404Page mirrors nginx's default 404 error page.
+const nginx404Page = "<html>\r\n<head><title>404 Not Found</title></head>\r\n<body>\r\n<center><h1>404 Not Found</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
+
 func buildHysteria(base M, nc *model.NodeSpec, users []model.UserSpec, tc kernel.TLSCert) M {
 	if nc.Version == 2 {
 		base["type"] = "hysteria2"
@@ -654,6 +657,21 @@ func buildHysteria(base M, nc *model.NodeSpec, users []model.UserSpec, tc kernel
 				"type":     nc.Obfs,
 				"password": nc.ObfsPassword,
 			}
+		}
+
+		// Masquerade: unauthenticated/probing HTTP/3 requests get a fake site.
+		// "nginx" returns a stock nginx 404 page; otherwise the value is passed
+		// through as a URL (http(s):// reverse proxy or file:// static dir).
+		switch nc.Masquerade {
+		case "":
+		case "nginx":
+			base["masquerade"] = M{
+				"type":        "string",
+				"status_code": 404,
+				"content":     nginx404Page,
+			}
+		default:
+			base["masquerade"] = nc.Masquerade
 		}
 	} else {
 		base["type"] = "hysteria"

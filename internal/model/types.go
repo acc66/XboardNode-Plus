@@ -37,6 +37,7 @@ type NodeSpec struct {
 	DownMbps     int
 	Obfs         string
 	ObfsPassword string
+	Masquerade   string
 
 	CongestionControl string
 	PaddingScheme     string
