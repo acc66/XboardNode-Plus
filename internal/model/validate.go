@@ -81,6 +81,10 @@ func ResolveEffectiveKernelType(n *NodeSpec, configuredKernel string) (string, e
 		if n != nil && singboxUnsupportedTransports[strings.ToLower(strings.TrimSpace(n.Network))] {
 			return KernelXray, nil
 		}
+		// sing-box shadowsocks inbound has no plugin/transport support.
+		if _, _, _, ok := SSWebSocketPlugin(n); ok {
+			return KernelXray, nil
+		}
 		return KernelSingBox, nil
 	}
 	return kernelType, nil

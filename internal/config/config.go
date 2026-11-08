@@ -27,6 +27,7 @@ type Config struct {
 	Log        LogConfig     `yaml:"log"`
 	Runtime    RuntimeConfig `yaml:"runtime"`
 	WS         WSConfig      `yaml:"ws"`
+	Guard      GuardConfig   `yaml:"guard"`
 	// Standalone enables a local-only node that never contacts the panel.
 	Standalone *StandaloneConfig `yaml:"standalone,omitempty"`
 	// HealthPort enables a lightweight HTTP health-check endpoint on the
@@ -115,6 +116,30 @@ type WSConfig struct {
 	BackoffInitial    int `yaml:"backoff_initial"`    // initial reconnect delay (sec), default 1
 	BackoffMax        int `yaml:"backoff_max"`        // max reconnect delay (sec), default 60
 	DiscoveryInterval int `yaml:"discovery_interval"` // WS discovery interval (sec), default 300
+}
+
+// GuardConfig enables the anti-probe front for plain (non-TLS) WebSocket nodes
+// (vless/vmess/trojan + ws, shadowsocks + v2ray-plugin/xray-plugin websocket).
+// The guard owns the public port and forwards only requests whose path matches
+// the node's ws path to the kernel on a loopback port. Wrong path → IP banned +
+// nginx honeypot page; banned IPs are dropped on connect.
+//
+//	guard:
+//	  enabled: true
+//	  blacklist: /etc/xboard-node/blacklist.txt  # one IP per line, edit to unban
+//	  allow: "1.2.3.4,5.6.7.8"                    # never ban these
+//	  real_ip_header: ""                          # e.g. CF-Connecting-IP when behind a CDN
+type GuardConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Blacklist string `yaml:"blacklist"`
+	Allow     string `yaml:"allow"`
+	// NoBan only serves the honeypot page without banning (for dry runs).
+	NoBan bool `yaml:"no_ban"`
+	// RealIPHeader takes the client IP from this header instead of the TCP peer.
+	// Only set this when the port is reachable exclusively through the CDN,
+	// otherwise clients can forge the header. Banned IPs are then rejected at
+	// the HTTP layer instead of on connect.
+	RealIPHeader string `yaml:"real_ip_header"`
 }
 
 type KernelConfig struct {
@@ -487,6 +512,10 @@ func (c *Config) inheritFrom(parent *Config) {
 	if c.WS.DiscoveryInterval == 0 {
 		c.WS.DiscoveryInterval = parent.WS.DiscoveryInterval
 	}
+	// Guard
+	if !c.Guard.Enabled && parent.Guard.Enabled {
+		c.Guard = parent.Guard
+	}
 	// Runtime
 	if c.Runtime.GoGCPercent == 0 {
 		c.Runtime.GoGCPercent = parent.Runtime.GoGCPercent
@@ -577,6 +606,9 @@ func (c *Config) setDefaultsFrom(baseDir string) {
 	}
 	if c.Cert.HTTPPort == 0 {
 		c.Cert.HTTPPort = 80
+	}
+	if c.Guard.Blacklist == "" {
+		c.Guard.Blacklist = filepath.Join(c.Kernel.ConfigDir, "blacklist.txt")
 	}
 	// WS defaults
 	if c.WS.StatusInterval == 0 {

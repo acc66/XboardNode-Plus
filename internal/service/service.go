@@ -18,6 +18,7 @@ import (
 	"github.com/cedar2025/xboard-node/internal/cert/dnsproviders"
 	"github.com/cedar2025/xboard-node/internal/config"
 	"github.com/cedar2025/xboard-node/internal/controlplane"
+	"github.com/cedar2025/xboard-node/internal/guard"
 	"github.com/cedar2025/xboard-node/internal/kernel"
 	"github.com/cedar2025/xboard-node/internal/kernel/singbox"
 	"github.com/cedar2025/xboard-node/internal/kernel/xray"
@@ -165,7 +166,7 @@ func newService(cfg *config.Config, cp controlplane.ControlPlane) *Service {
 	if initialKernelType == model.KernelAuto {
 		initialKernelType = model.KernelSingBox
 	}
-	k := newKernel(cfg.Kernel, initialKernelType)
+	k := guard.Wrap(newKernel(cfg.Kernel, initialKernelType), cfg.Guard)
 
 	l := limiter.New()
 	st := limiter.NewSpeedTracker(l)
@@ -242,7 +243,7 @@ func (s *Service) ensureKernelType(kernelType string, nc *model.NodeSpec) {
 	if s.kernel != nil {
 		s.kernel.Stop()
 	}
-	s.kernel = newKernel(s.cfg.Kernel, kernelType)
+	s.kernel = guard.Wrap(newKernel(s.cfg.Kernel, kernelType), s.cfg.Guard)
 	s.kernelType = kernelType
 	s.configureKernelCallbacks()
 

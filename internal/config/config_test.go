@@ -560,3 +560,30 @@ func TestInheritFrom_AutoTLSInheritedWhenChildHasNoCertConfig(t *testing.T) {
 		t.Error("auto_tls should be inherited when child has no cert config")
 	}
 }
+
+func TestLoadRoot_GuardInheritedByInstances(t *testing.T) {
+	path := writeTemp(t, `
+guard:
+  enabled: true
+  blacklist: "/etc/XboardNode-Plus/blacklist.txt"
+  allow: "1.2.3.4"
+instances:
+  - panel:
+      url: "https://panel.example.com"
+      token: "tok-a"
+      node_id: 1
+  - panel:
+      url: "https://panel.example.com"
+      token: "tok-b"
+      node_id: 2
+`)
+	root, err := LoadRoot(path)
+	if err != nil {
+		t.Fatalf("LoadRoot: %v", err)
+	}
+	for i, inst := range root.Instances {
+		if !inst.Guard.Enabled || inst.Guard.Blacklist != "/etc/XboardNode-Plus/blacklist.txt" || inst.Guard.Allow != "1.2.3.4" {
+			t.Fatalf("instance %d guard = %+v", i, inst.Guard)
+		}
+	}
+}

@@ -28,7 +28,7 @@ DEFAULT_ACTION="install"
 DEFAULT_RELEASE_VERSION="latest"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
-DEFAULT_DOWNLOAD_BASE="https://github.com/xboardnext999/XboardNode-Plus/releases"
+DEFAULT_DOWNLOAD_BASE="https://github.com/acc66/XboardNode-Plus/releases"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
@@ -611,7 +611,7 @@ render_service() {
     cat >"$TMP_DIR/${SERVICE_NAME}" <<EOF_UNIT
 [Unit]
 Description=Xboard Node Backend
-Documentation=https://github.com/xboardnext999/XboardNode-Plus
+Documentation=https://github.com/acc66/XboardNode-Plus
 After=network-online.target
 Wants=network-online.target
 

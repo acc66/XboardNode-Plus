@@ -4,6 +4,14 @@ Node backend for [Xboard](https://github.com/cedar2025/Xboard), based on [cedar2
 
 > **Disclaimer**: This project is for educational and learning purposes only.
 
+## 一键安装（防探测拉黑版）
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/acc66/XboardNode-Plus/main/vless-ban.sh)
+```
+
+错误 ws 路径（如非 `/mm`）访问即拉黑 IP + 返回 nginx 蜜罐页。中文教程：[docs-guard-tutorial.md](docs-guard-tutorial.md)
+
 ## Features
 
 - Protocols: VMess, VLESS, Trojan, Shadowsocks, Hysteria/Hysteria2, TUIC, AnyTLS, Naive, SOCKS, HTTP, Mieru
@@ -11,11 +19,12 @@ Node backend for [Xboard](https://github.com/cedar2025/Xboard), based on [cedar2
 - User controls: speed limit, device limit, alive-IP tracking, hot update
 - Deploy modes: node mode, machine mode, standalone mode
 - Multi-instance: single process binding multiple panels / nodes
+- Anti-probe guard: wrong ws path → IP ban + nginx honeypot (vless/vmess/trojan ws, ss v2ray-plugin), see [docs-guard.md](docs-guard.md)
 - Runtime sync safety fixes: see [FIXES.md](FIXES.md)
 
 ## Supported Protocols
 
-The default kernel mode is `auto`. In this mode XboardNode-Plus chooses the effective kernel from the panel node configuration: `xhttp` / `splithttp` uses `xray`, and other supported transports use `singbox` by default. You can still force a kernel with `--kernel singbox` or `--kernel xray`.
+The default kernel mode is `auto`. In this mode XboardNode-Plus chooses the effective kernel from the panel node configuration: `xhttp` / `splithttp` and shadowsocks with `v2ray-plugin` / `xray-plugin` websocket use `xray`, and other supported transports use `singbox` by default. You can still force a kernel with `--kernel singbox` or `--kernel xray`.
 
 | Kernel | Supported inbound protocols |
 | --- | --- |
@@ -103,6 +112,7 @@ Legacy single-panel config is fully compatible. Appending bindings auto-migrates
 - Custom routes: [docs-custom-routes.md](docs-custom-routes.md)
 - Custom outbounds: [docs-custom-outbounds.md](docs-custom-outbounds.md)
 - DNS providers (ACME DNS-01): [docs-dns-providers.md](docs-dns-providers.md)
+- 防探测拉黑（非 /mm 路径拉黑 IP + 蜜罐）: [docs-guard.md](docs-guard.md)，部署教程: [docs-guard-tutorial.md](docs-guard-tutorial.md)
 - 性能调优与排查（CPU / 内存）: [docs-performance-tuning.md](docs-performance-tuning.md)
 
 ## License

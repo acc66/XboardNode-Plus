@@ -222,7 +222,7 @@ func buildInbound(nc *model.NodeSpec, users []model.UserSpec, tc kernel.TLSCert)
 	case "trojan":
 		return buildTrojan(base, nc, users, tc)
 	case "shadowsocks":
-		return buildShadowsocks(base, nc, users)
+		return buildShadowsocks(base, nc, users, tc)
 	case "socks":
 		return buildSocks(base, users)
 	case "http":
@@ -316,7 +316,7 @@ var ss2022Methods = map[string]ss2022Config{
 	"2022-blake3-chacha20-poly1305": {"2022-blake3-chacha20-poly1305", 32},
 }
 
-func buildShadowsocks(base M, nc *model.NodeSpec, users []model.UserSpec) M {
+func buildShadowsocks(base M, nc *model.NodeSpec, users []model.UserSpec, tc kernel.TLSCert) M {
 	ss2022, isSS2022 := ss2022Methods[nc.Cipher]
 
 	clients := make([]M, 0, len(users))
@@ -358,6 +358,23 @@ func buildShadowsocks(base M, nc *model.NodeSpec, users []model.UserSpec) M {
 			"clients": clients,
 			"network": "tcp,udp",
 		}
+	}
+
+	// v2ray-plugin / xray-plugin websocket mode → native ws transport.
+	// Client side must disable plugin mux (mux=0), Xray's ss inbound does not
+	// unwrap mux.cool frames.
+	if path, host, tls, ok := model.SSWebSocketPlugin(nc); ok {
+		wsNode := *nc
+		wsNode.Network = "ws"
+		wsNode.NetworkSettings = map[string]any{"path": path}
+		if host != "" {
+			wsNode.NetworkSettings["host"] = host
+		}
+		wsNode.TLS = 0
+		if tls {
+			wsNode.TLS = 1
+		}
+		applyStreamSettings(base, &wsNode, tc)
 	}
 	return base
 }

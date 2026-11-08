@@ -30,7 +30,7 @@ const (
 	serviceName            = "xboard-node.service"
 	serviceFilePath        = "/etc/systemd/system/xboard-node.service"
 	defaultInstallRoot     = "/etc/XboardNode-Plus"
-	downloadBase           = "https://github.com/xboardnext999/XboardNode-Plus/releases"
+	downloadBase           = "https://github.com/acc66/XboardNode-Plus/releases"
 )
 
 var (
@@ -48,28 +48,30 @@ type instanceRow struct {
 }
 
 type fileRootConfig struct {
-	Log       *fileLogConfig     `yaml:"log,omitempty"`
-	Kernel    *fileKernelConfig  `yaml:"kernel,omitempty"`
-	Node      *fileNodeConfig    `yaml:"node,omitempty"`
-	WS        *config.WSConfig   `yaml:"ws,omitempty"`
-	Runtime   *fileRuntimeConfig `yaml:"runtime,omitempty"`
-	Cert      *config.CertConfig `yaml:"cert,omitempty"`
-	Instances []fileInstance     `yaml:"instances,omitempty"`
+	Log       *fileLogConfig      `yaml:"log,omitempty"`
+	Kernel    *fileKernelConfig   `yaml:"kernel,omitempty"`
+	Node      *fileNodeConfig     `yaml:"node,omitempty"`
+	WS        *config.WSConfig    `yaml:"ws,omitempty"`
+	Guard     *config.GuardConfig `yaml:"guard,omitempty"`
+	Runtime   *fileRuntimeConfig  `yaml:"runtime,omitempty"`
+	Cert      *config.CertConfig  `yaml:"cert,omitempty"`
+	Instances []fileInstance      `yaml:"instances,omitempty"`
 }
 
 type fileInstance struct {
-	ID         string             `yaml:"id,omitempty"`
-	Panel      filePanelConfig    `yaml:"panel"`
-	Node       *fileNodeConfig    `yaml:"node,omitempty"`
-	Kernel     fileKernelConfig   `yaml:"kernel"`
-	Log        fileLogConfig      `yaml:"log"`
-	Runtime    *fileRuntimeConfig `yaml:"runtime,omitempty"`
-	HealthPort int                `yaml:"health_port,omitempty"`
-	Machine    *fileMachineConfig `yaml:"machine,omitempty"`
-	Standalone map[string]any     `yaml:"standalone,omitempty"`
-	Cert       *config.CertConfig `yaml:"cert,omitempty"`
-	WS         *config.WSConfig   `yaml:"ws,omitempty"`
-	Nodes      []config.NodeEntry `yaml:"nodes,omitempty"`
+	ID         string              `yaml:"id,omitempty"`
+	Panel      filePanelConfig     `yaml:"panel"`
+	Node       *fileNodeConfig     `yaml:"node,omitempty"`
+	Kernel     fileKernelConfig    `yaml:"kernel"`
+	Log        fileLogConfig       `yaml:"log"`
+	Runtime    *fileRuntimeConfig  `yaml:"runtime,omitempty"`
+	HealthPort int                 `yaml:"health_port,omitempty"`
+	Machine    *fileMachineConfig  `yaml:"machine,omitempty"`
+	Standalone map[string]any      `yaml:"standalone,omitempty"`
+	Cert       *config.CertConfig  `yaml:"cert,omitempty"`
+	WS         *config.WSConfig    `yaml:"ws,omitempty"`
+	Guard      *config.GuardConfig `yaml:"guard,omitempty"`
+	Nodes      []config.NodeEntry  `yaml:"nodes,omitempty"`
 }
 
 type filePanelConfig struct {
@@ -866,6 +868,9 @@ func writeRootConfig(path string, root *config.RootConfig) error {
 	if p.WS.StatusInterval != 0 || p.WS.HandshakeTimeout != 0 || p.WS.BackoffInitial != 0 {
 		out.WS = &p.WS
 	}
+	if p.Guard != (config.GuardConfig{}) {
+		out.Guard = &p.Guard
+	}
 	if p.Cert.CertMode != "" || p.Cert.Domain != "" || p.Cert.CertFile != "" || p.Cert.AutoTLS {
 		out.Cert = &p.Cert
 	}
@@ -921,6 +926,11 @@ func writeRootConfig(path string, root *config.RootConfig) error {
 		}
 		if inst.WS.StatusInterval != 0 || inst.WS.HandshakeTimeout != 0 || inst.WS.BackoffInitial != 0 {
 			fi.WS = &inst.WS
+		}
+		// Instances inherit the top-level guard; only write real overrides.
+		if inst.Guard != (config.GuardConfig{}) && inst.Guard != p.Guard {
+			g := inst.Guard
+			fi.Guard = &g
 		}
 		if len(inst.Nodes) > 0 {
 			fi.Nodes = inst.Nodes
@@ -1157,7 +1167,7 @@ func latestInstanceID(instances []*config.Config) string {
 func regenerateServiceFile() error {
 	unit := fmt.Sprintf(`[Unit]
 Description=Xboard Node Backend
-Documentation=https://github.com/xboardnext999/XboardNode-Plus
+Documentation=https://github.com/acc66/XboardNode-Plus
 After=network-online.target
 Wants=network-online.target
 

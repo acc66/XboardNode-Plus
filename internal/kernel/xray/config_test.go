@@ -572,3 +572,30 @@ func TestExtractECHServerKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildConfig_Shadowsocks_V2rayPluginWebSocket(t *testing.T) {
+	nc := panel.NodeConfig{
+		Protocol:   "shadowsocks",
+		ServerPort: 2086,
+		Cipher:     "aes-128-gcm",
+		Plugin:     "v2ray-plugin",
+		PluginOpt:  "mode=websocket;host=xg2.apple9.org;path=/mm",
+	}
+	cfg := buildConfig(testKernelCfg, testNodeSpec(&nc), testUsers, kernel.TLSCert{})
+	data, _ := json.Marshal(cfg)
+
+	var parsed map[string]interface{}
+	json.Unmarshal(data, &parsed)
+	ib := parsed["inbounds"].([]interface{})[0].(map[string]interface{})
+	ss := ib["streamSettings"].(map[string]interface{})
+	if ss["network"] != "ws" {
+		t.Fatalf("network = %v, want ws", ss["network"])
+	}
+	ws := ss["wsSettings"].(map[string]interface{})
+	if ws["path"] != "/mm" || ws["headers"].(map[string]interface{})["Host"] != "xg2.apple9.org" {
+		t.Fatalf("wsSettings = %v", ws)
+	}
+	if _, ok := ss["security"]; ok {
+		t.Fatalf("plain ws must not set security: %v", ss)
+	}
+}

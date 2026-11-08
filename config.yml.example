@@ -24,3 +24,12 @@
 #       token: "machine-token-2"
 #     log:
 #       level: "debug"   # override for this instance only
+
+# ── Anti-probe guard (vless/vmess/trojan + ws, ss + v2ray-plugin websocket; non-TLS only) ──
+# Wrong ws path → IP banned + nginx honeypot page; banned IPs are dropped on connect.
+# guard:
+#   enabled: true
+#   blacklist: "/etc/xboard-node/blacklist.txt"  # one IP per line, delete a line to unban
+#   allow: "1.2.3.4"                              # never ban these (your own test IPs)
+#   real_ip_header: ""                            # e.g. "CF-Connecting-IP" ONLY if the port is CDN-only
+#   no_ban: false                                 # true = honeypot only, no banning
