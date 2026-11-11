@@ -53,3 +53,19 @@
 
 - **Prefer** `custom_outbounds`: panel-managed, cross-kernel compatible
 - **Use** `kernel.custom_outbound` only: when native fields are needed
+
+## Live updates (sing-box)
+
+Panel changes are applied on the next successful configuration sync. New and
+changed outbounds are installed before routing rules reference them; removed
+outbounds are retired after the rules update. Proxy-chain dependencies are
+loaded first and refreshed when their parent changes.
+
+Outbound-only and route-only changes preserve the inbound listener, traffic
+tracker, and unchanged outbounds. No service restart is required. Replacing or
+removing an outbound may close sessions belonging to that outbound, depending
+on the protocol. Invalid configurations still follow the existing reload error
+and recovery path.
+
+Install a build containing this fix once; older running binaries still need a
+restart to apply newly added outbounds.

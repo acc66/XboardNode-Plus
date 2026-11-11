@@ -132,7 +132,7 @@ func outboundConfigToSingbox(oc model.OutboundConfig) M {
 	}
 
 	if oc.ProxyTag != "" {
-		m["proxy_tag"] = oc.ProxyTag
+		m["detour"] = oc.ProxyTag
 	}
 	return m
 }

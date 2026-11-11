@@ -1,10 +1,10 @@
 package singbox
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -44,6 +44,7 @@ type SingBox struct {
 	users      []model.UserSpec
 	nodeConfig *model.NodeSpec
 	tls        kernel.TLSCert
+	outbounds  []option.Outbound
 
 	// connTracker is our lightweight in-process byte/IP tracker.
 	// Created fresh on every Start (full restart).
@@ -138,6 +139,7 @@ func (s *SingBox) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls 
 	s.users = users
 	s.nodeConfig = nodeConfig
 	s.tls = tls
+	s.outbounds = opts.Outbounds
 
 	// Fresh tracker on full restart.
 	s.connTracker = NewConnTracker(0)
@@ -190,8 +192,9 @@ func recycleOldBox(oldBox *box.Box, oldCancel context.CancelFunc, oldCtx context
 }
 
 // Reload hot-swaps the inbound users and routing rules without restarting the box.
-// Routes, outbounds, and the connTracker stay alive so in-flight connections
-// continue to be tracked correctly.
+// Unchanged inbounds and outbounds stay alive. New/changed outbounds are
+// installed before routing rules can reference them; removed ones are retired
+// after the routing update.
 func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -221,75 +224,72 @@ func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls
 		return fmt.Errorf("router not available")
 	}
 
-	// Update routing rules
-	if err := router.UpdateRules(opts.Route.Rules, opts.Route.RuleSet); err != nil {
-		nlog.Core().Debug("routing reload failed", "error", err)
-	} else {
-		nlog.Core().Debug("sing-box routing reloaded")
+	om := service.FromContext[adapter.OutboundManager](s.ctx)
+	if om == nil {
+		return fmt.Errorf("outbound manager not available")
 	}
-
 	nopFactory := singLog.NewNOPFactory()
+	// Install outbounds before rules: otherwise a newly added panel route can
+	// become live while its target still does not exist in the running box.
+	ordered, err := orderOutbounds(opts.Outbounds)
+	if err != nil {
+		return err
+	}
+	previous := make(map[string]option.Outbound, len(s.outbounds))
+	for _, outbound := range s.outbounds {
+		previous[outbound.Tag] = outbound
+	}
+	changed := make(map[string]bool)
+	for _, outbound := range ordered {
+		old, exists := previous[outbound.Tag]
+		_, loaded := om.Outbound(outbound.Tag)
+		dependencyChanged := false
+		for _, tag := range outboundDependencies(outbound) {
+			dependencyChanged = dependencyChanged || changed[tag]
+		}
+		if exists && loaded && !dependencyChanged && reflect.DeepEqual(old, outbound) {
+			continue
+		}
+		logger := nopFactory.NewLogger(fmt.Sprintf("outbound/%s[%s]", outbound.Type, outbound.Tag))
+		if err := om.Create(s.ctx, router, logger, outbound.Tag, outbound.Type, outbound.Options); err != nil {
+			return fmt.Errorf("reload outbound %s: %w", outbound.Tag, err)
+		}
+		changed[outbound.Tag] = true
+	}
+	if err := router.UpdateRules(opts.Route.Rules, opts.Route.RuleSet); err != nil {
+		return fmt.Errorf("reload routing rules: %w", err)
+	}
+	// Remove dependents before dependencies, and only after the old rules no
+	// longer reference them. Leave unchanged outbounds (and their sessions) alone.
+	oldOrdered, err := orderOutbounds(s.outbounds)
+	if err != nil {
+		return err
+	}
+	wanted := make(map[string]bool, len(opts.Outbounds))
+	for _, outbound := range opts.Outbounds {
+		wanted[outbound.Tag] = true
+	}
+	for i := len(oldOrdered) - 1; i >= 0; i-- {
+		tag := oldOrdered[i].Tag
+		if !wanted[tag] {
+			if err := om.Remove(tag); err != nil {
+				return fmt.Errorf("remove outbound %s: %w", tag, err)
+			}
+		}
+	}
+	s.outbounds = opts.Outbounds
 
-	// Configuration hash check for inbound reconstruction
-	tlsChanged := !bytes.Equal(s.tls.CertPEM, tls.CertPEM) || !bytes.Equal(s.tls.KeyPEM, tls.KeyPEM)
-	configChanged := tlsChanged || s.nodeConfig == nil || kernel.ComputeHash(nodeConfig, users) != kernel.ComputeHash(s.nodeConfig, s.users)
+	// Routing/outbound changes do not require recreating the inbound listener.
+	configChanged := s.nodeConfig == nil || !reflect.DeepEqual(
+		buildInbound(s.nodeConfig, s.users, s.tls), buildInbound(nodeConfig, users, tls))
 
 	for _, inb := range opts.Inbounds {
 		tag := inb.Tag
 		if !configChanged {
-			if existing, ok := im.Get(tag); ok && existing.Type() == inb.Type {
-				var err error
-				switch v := existing.(type) {
-				case adapter.UpdatableInbound[option.VMessUser]:
-					if opts, ok := inb.Options.(*option.VMessInboundOptions); ok {
-						err = v.UpdateUsers(opts.Users)
-					}
-				case adapter.UpdatableInbound[option.VLESSUser]:
-					if opts, ok := inb.Options.(*option.VLESSInboundOptions); ok {
-						err = v.UpdateUsers(opts.Users)
-					}
-				case adapter.UpdatableInbound[option.TrojanUser]:
-					if opts, ok := inb.Options.(*option.TrojanInboundOptions); ok {
-						err = v.UpdateUsers(opts.Users)
-					}
-				case adapter.UpdatableInbound[option.Hysteria2User]:
-					if opts, ok := inb.Options.(*option.Hysteria2InboundOptions); ok {
-						err = v.UpdateUsers(opts.Users)
-					}
-				case adapter.UpdatableShadowsocksInbound:
-					if opts, ok := inb.Options.(*option.ShadowsocksInboundOptions); ok {
-						err = v.UpdateUsersByOptions(opts.Users)
-					}
-				case adapter.UpdatableInbound[option.TUICUser]:
-					if opts, ok := inb.Options.(*option.TUICInboundOptions); ok {
-						err = v.UpdateUsers(opts.Users)
-					}
-				case adapter.UpdatableInbound[option.AnyTLSUser]:
-					if opts, ok := inb.Options.(*option.AnyTLSInboundOptions); ok {
-						err = v.UpdateUsers(opts.Users)
-					}
-				case adapter.UpdatableInbound[option.MieruUser]:
-					if opts, ok := inb.Options.(*option.MieruInboundOptions); ok {
-						err = v.UpdateUsers(opts.Users)
-					}
-				case adapter.UpdatableInbound[auth.User]:
-					switch opts := inb.Options.(type) {
-					case *option.NaiveInboundOptions:
-						err = v.UpdateUsers(opts.Users)
-					case *option.SocksInboundOptions:
-						err = v.UpdateUsers(opts.Users)
-					case *option.HTTPMixedInboundOptions:
-						err = v.UpdateUsers(opts.Users)
-					}
-				}
-				if err == nil {
-					continue
-				}
-				nlog.Core().Warn("incremental update failed, falling back to recreate", "tag", tag, "error", err)
-			}
+			continue
 		}
 
-		// Config mismatch or incremental update failure: Reconstruct Inbound.
+		// Reconstruct only when the generated inbound configuration changes.
 		// Remove the existing inbound first so im.Create() can bind the same port.
 		// im.Create() cannot atomically swap a TCP listener — it tries to start the
 		// new socket before the old one is closed, causing "address already in use".
